@@ -5,7 +5,7 @@ import threading
 import os
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# ============== CONFIG ==============
+# Your config
 BOT_TOKEN = "8687556447:AAElwUSar-ZaVZpk0K-8Cp7nSELlv9EKwt4"
 CHANNEL_ID = "@dexupdateslive"
 
@@ -14,12 +14,12 @@ bot = telebot.TeleBot(BOT_TOKEN)
 seen_profiles = set()
 seen_boosts = set()
 
-# === HEALTH CHECK SERVER (keeps Render awake) ===
+# Health server to keep Render awake
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'OK - DexUpdatesLive Bot running')
+        self.wfile.write(b'OK - DexUpdatesLive Bot is running')
 
 def run_health_server():
     port = int(os.environ.get('PORT', 8080))
@@ -27,14 +27,13 @@ def run_health_server():
     print(f"Health server listening on port {port}")
     server.serve_forever()
 
-# Run health server in background thread
 threading.Thread(target=run_health_server, daemon=True).start()
 
-print("🤖 DexUpdatesLive Bot started - polling DexScreener 24/7...")
+print("🤖 Starting DexUpdatesLive Bot - polling every 20s...")
 
 while True:
     try:
-        # 1. New DEX Paid Profiles (new pairs with paid profile)
+        # New DEX Paid Profiles
         profiles_resp = requests.get("https://api.dexscreener.com/token-profiles/latest/v1")
         profiles_resp.raise_for_status()
         profiles = profiles_resp.json()
@@ -59,11 +58,11 @@ while True:
             image = pair.get("info", {}).get("imageUrl")
 
             caption = f"""
-🚨 NEW DEX PAID PROFILE DETECTED!
+🚨 **NEW DEX PAID PROFILE!**
 
-{name} ({symbol})  
-Chain: {chain}  
-FDV: {fdv}  
+**{name} ({symbol})**
+Chain: {chain}
+FDV: {fdv}
 Liquidity: {liq}
 
 [📈 View on DexScreener]({url})
@@ -74,7 +73,7 @@ Liquidity: {liq}
             else:
                 bot.send_message(CHANNEL_ID, caption, parse_mode="Markdown")
 
-        # 2. New DEX Trending Boosts
+        # New Trending Boosts
         boosts_resp = requests.get("https://api.dexscreener.com/token-boosts/latest/v1")
         boosts_resp.raise_for_status()
         boosts = boosts_resp.json()
@@ -98,10 +97,10 @@ Liquidity: {liq}
             image = pair.get("info", {}).get("imageUrl")
 
             caption = f"""
-🔥 NEW TRENDING BOOST ALERT!
+🔥 **NEW TRENDING BOOST!**
 
-{name} ({symbol})  
-Chain: {chain}  
+**{name} ({symbol})**
+Chain: {chain}
 FDV: {fdv}
 
 [📈 View on DexScreener]({url})
@@ -111,3 +110,8 @@ FDV: {fdv}
                 bot.send_photo(CHANNEL_ID, image, caption=caption, parse_mode="Markdown")
             else:
                 bot.send_message(CHANNEL_ID, caption, parse_mode="Markdown")
+
+    except Exception as e:
+        print(f"Poll error: {str(e)}")
+
+    time.sleep(20)
