@@ -11,80 +11,92 @@ ALERT_CHANNEL = "@DEXSTRACKON"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-monitored = {}   # username: last_checked_time
+monitored = {}  # username -> last_checked_time
 
-print("🕵️ Deleted Username Tracker (Forward Method) Started...")
+print("🕵️ Deleted TG Username Tracker Started (Improved Version)")
 
 # Health server
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b'OK')
+        self.wfile.write(b'OK - Tracker Running')
 
 def run_health():
     port = int(os.environ.get('PORT', 8080))
-    HTTPServer(('', port), HealthHandler).serve_forever()
+    server = HTTPServer(('', port), HealthHandler)
+    print(f"✅ Health server running on port {port}")
+    server.serve_forever()
 
 threading.Thread(target=run_health, daemon=True).start()
 
 def extract_usernames(text):
     if not text:
         return []
-    patterns = [r'@([a-zA-Z0-9_]{5,32})', r't\.me/([a-zA-Z0-9_]{5,32})']
+    # Improved regex for @username and t.me/ links
+    patterns = [
+        r'@([a-zA-Z0-9_]{5,32})',
+        r't\.me/([a-zA-Z0-9_]{5,32})',
+        r'telegram\.me/([a-zA-Z0-9_]{5,32})'
+    ]
     found = []
-    for p in patterns:
-        found.extend(re.findall(p, text, re.IGNORECASE))
-    return [u.lower() for u in found if len(u) >= 5]
+    for pattern in patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        found.extend(matches)
+    return [u.lower().strip() for u in found if len(u) >= 5]
 
-def is_available(username):
+def is_username_deleted(username):
     try:
-        r = requests.get(f"https://t.me/{username}", timeout=10, allow_redirects=True)
-        if r.status_code == 200:
-            text = r.text.lower()
-            if any(word in text for word in ["doesn't exist", "channel not found", "no longer exists", "private group"]):
-                return True
+        r = requests.get(f"https://t.me/{username}", timeout=10)
+        if r.status_code != 200:
+            return True
+        content = r.text.lower()
+        if any(phrase in content for phrase in ["doesn't exist", "channel not found", "no longer exists", "this channel doesn't exist"]):
+            return True
         return False
     except:
         return False
 
-# Main loop - check every ~45 seconds
+print("🔄 Starting main loop...")
+
 while True:
     try:
-        # Get recent messages from your alert channel (forwarded ones)
-        updates = bot.get_chat_history(ALERT_CHANNEL, limit=100)
+        # Scan alert channel for forwarded messages
+        messages = bot.get_chat_history(ALERT_CHANNEL, limit=120)
         
-        for msg in updates:
-            if not msg.text:
-                continue
-            usernames = extract_usernames(msg.text)
-            for u in usernames:
-                if u not in monitored:
-                    monitored[u] = time.time()
-                    print(f"Added @{u} to monitoring")
+        added_count = 0
+        for msg in messages:
+            if msg.text:
+                usernames = extract_usernames(msg.text)
+                for u in usernames:
+                    if u not in monitored:
+                        monitored[u] = time.time()
+                        added_count += 1
+                        print(f"✅ Added new username to monitor: @{u}")
 
-        # Check monitored usernames
+        if added_count > 0:
+            print(f"Total monitored usernames: {len(monitored)}")
+
+        # Check for deletions
         now = time.time()
         for username in list(monitored.keys()):
-            if now - monitored[username] > 45:   # check every 45 seconds
-                if is_available(username):
+            if now - monitored[username] > 35:  # Check roughly every 35 seconds
+                if is_username_deleted(username):
                     alert = f"""
-🔓 **USERNAME AVAILABLE NOW!**
+🔓 **USERNAME NOW AVAILABLE!**
 
-**@{username}** has been deleted and is ready to use!
+**@{username}** has been **deleted** and is ready to claim!
 
-🕒 Detected: {time.strftime('%H:%M:%S')}
+🕒 Detected: {time.strftime('%Y-%m-%d %H:%M:%S')}
                     """.strip()
                     
                     bot.send_message(ALERT_CHANNEL, alert, parse_mode="Markdown")
-                    print(f"ALERT: @{username} is available!")
-                    
-                    # Remove so we don't spam
-                    del monitored[username]
+                    print(f"🚨 ALERT SENT → @{username} is available!")
+                    del monitored[username]   # Stop monitoring after alert
                 else:
-                    monitored[username] = now   # update timestamp
+                    monitored[username] = now
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Loop error: {e}")
 
-    time.sleep(8)
+    time.sleep(10)  # Main loop every 10 seconds
